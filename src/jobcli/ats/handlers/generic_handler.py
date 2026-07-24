@@ -71,6 +71,12 @@ class GenericATSHandler(BaseATSHandler):
         filler = self._get_filler()
         generic = filler.fill_personal_info()
 
+        # also try to fill summary
+        try:
+            summary_filled = filler.fill_summary()
+        except Exception:
+            summary_filled = False
+
         updated = dict(results)
         for short_key in failed:
             if generic.get(short_key):
@@ -80,6 +86,12 @@ class GenericATSHandler(BaseATSHandler):
                         f"Generic fallback succeeded for '{short_key}'",
                         phase=ExecutionPhase.RULES,
                     )
+
+        if summary_filled:
+            updated["summary"] = True
+            if self.logger:
+                self.logger.info("Generic fallback succeeded for 'summary'", phase=ExecutionPhase.RULES)
+
         return updated
 
     # ------------------------------------------------------------------

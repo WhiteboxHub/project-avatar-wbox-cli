@@ -20,10 +20,8 @@ from rich.console import Console
 from rich.prompt import Confirm, Prompt
 from rich.table import Table
 
-from jobcli.orchestration.engine import ApplicationEngine
 from jobcli.profile.schemas import ApplicationStatus, CommonQuestions, Config, InteractionMode, Job, ResumeData
 from jobcli.storage.models import Database
-from jobcli.orchestration.wbox_discoverer import WboxDiscoverer
 from jobcli.storage.repositories import (
     ConfigRepository,
     JobRepository,
@@ -768,6 +766,7 @@ def setup() -> None:
         console.print("  [yellow]⚠ Skipped — no Whitebox credentials. Run [cyan]login[/cyan].[/yellow]")
     else:
         try:
+            from jobcli.orchestration.wbox_discoverer import WboxDiscoverer
             session = db.get_session()
             discoverer = WboxDiscoverer(session, config=config)
             with console.status("[bold green]Fetching jobs from WBL (API)..."):
@@ -1254,6 +1253,8 @@ def _run_apply(
     mode: str,
     resume: bool = False,
     skip_resume_prompt: bool = False,
+    target_domain: Optional[str] = None,
+    disable_llm: bool = False,
 ) -> None:
     """Shared implementation for ``wboxcli apply`` (single URL or batch).
 
@@ -1295,6 +1296,10 @@ def _run_apply(
     install_global_sigint_handler()
 
     config = get_config()
+    if disable_llm:
+        config.openai_api_key = ""
+        config.anthropic_api_key = ""
+        config.gemini_api_key = ""
     ensure_configured(config, require_job_board=False)
 
     try:
@@ -1357,6 +1362,7 @@ def _run_apply(
                 Job(title="Manual Entry", url=url, status=ApplicationStatus.PENDING)
             )
         if job.status != ApplicationStatus.PENDING:
+            assert job.id is not None, "Job ID must be set"
             job_repo.update_status(job.id, ApplicationStatus.PENDING)
         jobs = [job]
 
@@ -1367,8 +1373,6 @@ def _run_apply(
             jobs = job_repo.list_pending()
             if sort.lower() == "newest":
                 jobs.reverse()
-            if limit:
-                jobs = jobs[:limit]
 
         if not jobs:
             if checkpoint:
@@ -1390,6 +1394,13 @@ def _run_apply(
     if len(jobs) < original_count:
         console.print(f"[yellow]Filtered out {original_count - len(jobs)} unsupported jobs (Workday, etc.).[/yellow]")
 
+    if target_domain:
+        jobs = [j for j in jobs if target_domain.lower() in j.url.lower()]
+        console.print(f"[cyan]Targeting {len(jobs)} jobs for domain {target_domain}[/cyan]")
+        
+    if limit and not checkpoint:
+        jobs = jobs[:limit]
+
     if not jobs:
         console.print("[yellow]No supported jobs remaining in the list.[/yellow]")
         session.close()
@@ -1397,6 +1408,7 @@ def _run_apply(
 
     console.print(f"Applying to {len(jobs)} job(s)...\n")
 
+    from jobcli.orchestration.engine import ApplicationEngine
     engine = ApplicationEngine(config, resume_data, db)
     tracker = SessionTracker(backend_url=config.sync_server_url or "https://api.whitebox-learning.com/api")
 
@@ -1664,6 +1676,11 @@ def apply(
         "-c",
         help="Resume the last batch apply stopped with Ctrl+C (same as ``wboxcli continue``).",
     ),
+    disable_llm: bool = typer.Option(
+        False,
+        "--disable-llm",
+        help="Run without an LLM (relies only on rule-based form filling).",
+    ),
 ) -> None:
     """Apply to all pending jobs from ``discover`` (or one job with ``--url``).
 
@@ -1683,6 +1700,25 @@ def apply(
         mode=mode,
         resume=continue_run,
         skip_resume_prompt=continue_run,
+        disable_llm=disable_llm,
+    )
+
+
+@app.command(name="apply-ashby")
+def apply_ashby(
+    limit: int = typer.Option(10, "--limit", "-l", help="Number of Ashby jobs to apply to"),
+    chatbot: bool = typer.Option(True, "--chatbot/--fast", help="Enable chatbot LLM for yes/no questions (use --fast to disable)"),
+) -> None:
+    """Run fully autonomous applications specifically for Ashby jobs."""
+    _run_apply(
+        url=None,
+        limit=limit,
+        sort="oldest",
+        mode="auto",
+        resume=False,
+        skip_resume_prompt=True,
+        target_domain="ashbyhq.com",
+        disable_llm=not chatbot,
     )
 
 
@@ -1728,6 +1764,7 @@ def discover(
     session = db.get_session()
 
     try:
+        from jobcli.orchestration.wbox_discoverer import WboxDiscoverer
         discoverer = WboxDiscoverer(session, config=config)
         with console.status("[bold green]Fetching jobs from WBL API..."):
             new_jobs = discoverer.discover(headless=headless, legacy_ui=legacy_ui)
@@ -1784,6 +1821,7 @@ def open_dashboard() -> None:
     session = db.get_session()
     
     try:
+        from jobcli.orchestration.wbox_discoverer import WboxDiscoverer
         discoverer = WboxDiscoverer(session, config=config)
         discoverer.open_interactive()
     except KeyboardInterrupt:
@@ -2060,7 +2098,7 @@ def send_daily_report_cmd(
 
 @app.command("schedule-report")
 def schedule_report_cmd(
-    owner_email: str = typer.Option(None, "--email", help="The recipient admin email address (defaults to ADMIN_EMAIL in .env)"),
+    owner_email: Optional[str] = typer.Option(None, "--email", help="The recipient admin email address (defaults to ADMIN_EMAIL in .env)"),
     time: str = typer.Option("18:00", "--time", help="Time to send the report in HH:MM format (24-hour clock)"),
 ) -> None:
     """Setup a Windows Scheduled Task to run the daily report locally."""

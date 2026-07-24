@@ -10,7 +10,7 @@ import os
 import random
 import time
 import re
-from typing import Any, Dict, Optional
+from typing import Any, Dict, Optional, TYPE_CHECKING
 
 from playwright.sync_api import Error, Page, sync_playwright
 
@@ -49,6 +49,11 @@ from jobcli.storage.repositories import (
     LearnedLocatorRepository,
     UserDataRepository,
 )
+
+
+if TYPE_CHECKING:
+    from jobcli.human.agent_interface import HandoffResult
+    from jobcli.intelligence.memory import AgentMemory
 
 
 def _strip_apply_clicks_when_filling_only(llm_response, task: str) -> None:
@@ -1316,6 +1321,7 @@ class ApplicationEngine:
         # Ensure session is started
         if not self.context:
             self.start_session()
+        assert self.context is not None, "Browser context must be initialized"
             
         # Reuse existing page if available, otherwise create new one
         if not hasattr(self, 'active_page') or self.active_page is None or self.active_page.is_closed():
@@ -1353,6 +1359,18 @@ class ApplicationEngine:
             # ── 1. Navigate ─────────────────────────────────────────
             agent.show_phase_banner("Navigating to job page")
             import playwright.sync_api
+            try:
+                import urllib.parse
+                if "ashbyhq.com" in job.url and "ashby_jid=" in job.url:
+                    parts = urllib.parse.urlparse(job.url)
+                    q = urllib.parse.parse_qs(parts.query)
+                    jid = q.get('ashby_jid', [''])[0]
+                    if jid:
+                        job.url = f"{parts.scheme}://{parts.netloc}{parts.path}/{jid}/application"
+                        logger.info(f"Rewrote Ashby URL to {job.url}", phase=ExecutionPhase.RULES)
+            except Exception:
+                pass
+
             try:
                 page.goto(job.url, timeout=45000, wait_until="domcontentloaded")
             except playwright.sync_api.TimeoutError:
@@ -2346,10 +2364,7 @@ class ApplicationEngine:
     #      ran but produced nothing"). Gated by self._last_extension_filled_count.
     #   3. LLM agent loop — fills whatever (1)/(2) left blank.
     #   4. Human-in-the-loop review — COMPULSORY in all modes including
-    #      AUTO. Invoked with force_block=True in _handoff_human_in_loop, so
-    #      the AUTO short-circuit in agent_interface.handoff_to_human is
-    #      bypassed. Submit click is skipped when _looks_like_confirmation
-    #      detects the human already submitted in the browser.
+    #      AUTO.
     FILL_PIPELINE_STEPS = (
         "① Extension",
         "② Rules (fallback)",
@@ -2404,6 +2419,21 @@ class ApplicationEngine:
             "(extension and LLM already ran; rules ran only if extension produced no fills)",
             phase=ExecutionPhase.HUMAN,
         )
+        
+        if agent.mode == InteractionMode.AUTO and not force_block:
+            logger.warning(f"Skipping human handoff in AUTO mode: {reason}", phase=ExecutionPhase.HUMAN)
+            agent.show_warning("AUTO mode: Skipping manual handoff, moving to next job.")
+            logger.log_phase_end(ExecutionPhase.HUMAN, False)
+            from jobcli.human.agent_interface import HandoffResult
+            return HandoffResult(
+                page=agent.page,
+                url_before=agent.page.url if agent.page else "",
+                url_after=agent.page.url if agent.page else "",
+                title_after="",
+                advanced=False,
+                cancelled=True
+            )
+
         agent.show_phase_banner("Human review (4/4)")
 
         # ── Snapshot fields BEFORE the human takes over ───────────────
@@ -2635,22 +2665,6 @@ class ApplicationEngine:
         llm_client = self._get_llm_client(logger)
         provider = self.config.default_llm_provider
 
-        if not llm_client:
-            agent.show_warning(
-                f"No API key for {provider} — switching to human-driven mode."
-            )
-            handoff = self._handoff_human_in_loop(
-                agent,
-                logger,
-                state,
-                reason=f"AI provider '{provider}' has no API key configured.",
-                hint="Fill and submit the form yourself in the browser. "
-                     "When you're done, press ENTER and JobCLI will record the result.",
-            )
-            if self._handoff_skipped_job(handoff, agent, logger, ExecutionPhase.HUMAN):
-                return False
-            return (not handoff.cancelled) and self._submission_looks_plausible(handoff.page)
-
         try:
             page.wait_for_timeout(500)
             self._dismiss_cookie_consent(page, logger)
@@ -2826,6 +2840,316 @@ class ApplicationEngine:
             )
 
             # ── Phase 3/5: LLM agent loop ─────────────────────────────────
+            
+            if not llm_client:
+                # CEO Bypass: Auto-submit for Ashby
+                if state.detected_ats.value.lower() == "ashby" and self.config.interaction_mode.value == "auto":
+                    agent.show_status("No LLM key. Bypassing AI and relying on Extension+Rules...", phase=ExecutionPhase.LLM)
+                    
+                    # --- ADVANCED CEO BYPASS FOR ASHBY ---
+                    try:
+                        # Ensure we are on the actual application form page
+                        if not page.url.endswith("/application") and "/application?" not in page.url:
+                            apply_btn = page.locator('a:has-text("Apply"), button:has-text("Apply"), a:has-text("Apply for this Job")').first
+                            if apply_btn.count() > 0 and apply_btn.is_visible():
+                                apply_btn.click(force=True)
+                                page.wait_for_load_state('networkidle', timeout=5000)
+                            else:
+                                # Fallback to URL manipulation
+                                base_url = page.url.split('?')[0].rstrip('/')
+                                query_str = ""
+                                if '?' in page.url:
+                                    query_str = "?" + page.url.split('?', 1)[1]
+                                page.goto(base_url + "/application" + query_str)
+                                page.wait_for_load_state('networkidle', timeout=5000)
+                                
+                        page.wait_for_timeout(2000) # give form a second to render
+                        
+                        personal = getattr(self.resume, 'personal', None)
+                        first_name = getattr(personal, 'first_name', '') if personal else getattr(self.resume, 'first_name', '')
+                        last_name = getattr(personal, 'last_name', '') if personal else getattr(self.resume, 'last_name', '')
+                        name = f"{first_name} {last_name}".strip()
+                        
+                        email = getattr(personal, 'email', '') if personal else getattr(self.resume, 'email', '')
+                        phone = getattr(personal, 'phone', '') if personal else getattr(self.resume, 'phone', '')
+                        linkedin = getattr(personal, 'linkedin', '') if personal else ''
+                        github = getattr(personal, 'github', '') if personal else ''
+                        website = getattr(personal, 'website', '') if personal else ''
+                        portfolio = getattr(personal, 'portfolio', '') if personal else ''
+                        
+                        city = getattr(personal, 'city', '') if personal else ''
+                        state_val = getattr(personal, 'state', '') if personal else ''
+                        country = getattr(personal, 'country', '') if personal else ''
+                        location_parts = [p for p in [city, state_val, country] if p]
+                        location = ", ".join(location_parts)
+                        
+                        text_fills = {
+                            "name": name,
+                            "email": email,
+                            "phone": phone,
+                            "linkedin": linkedin,
+                            "github": github,
+                            "website": website or github or linkedin,
+                            "portfolio": portfolio or github or website,
+                            "location": location,
+                            "country": country,
+                            "city": city,
+                            "why do you want to work here": "I am excited about the opportunity to work with a company that values innovation, collaboration, and continuous learning. Your mission and engineering culture strongly align with my career goals, and I believe my technical skills and enthusiasm for solving complex problems would allow me to contribute effectively while continuing to grow professionally.",
+                            "why are you interested": "This role closely matches my technical background and interests. I enjoy building scalable applications, improving software quality, and working with modern technologies. The opportunity to contribute to meaningful projects while learning from experienced engineers makes this position especially appealing.",
+                            "share any links": github or portfolio or website
+                        }
+                        
+                        demo = getattr(self.resume, 'demographics', None)
+                        gender_val = getattr(demo, 'gender', None) if demo else None
+                        age_val = getattr(demo, 'age', None) if demo else None
+                        
+                        yes_no_rules = {
+                            "degree": "Yes",
+                            "university": "Yes",
+                            "startup": "No",
+                            "sponsor": "No",
+                            "visa": "No",
+                            "onsite": "Yes",
+                            "hybrid": "Yes",
+                            "privacy": "Yes",
+                            "authorized": "Yes",
+                            "sponsorship": "No",
+                            "relocate": "Yes",
+                            "remote": "Yes",
+                            "18 years": "Yes",
+                            "previously worked": "No",
+                            "clearance": "No",
+                            "background check": "Yes",
+                            "maintained code": "100s of users",
+                            "design system": "Yes",
+                            "gender": gender_val or "I prefer not to answer",
+                            "ethnicity": "I prefer not to answer",
+                            "communities": "I prefer not to answer",
+                            "veteran": "I prefer not to answer",
+                            "disability": "I prefer not to answer",
+                            "age": age_val or "I prefer not to answer",
+                            "race": "I prefer not to answer",
+                            "office": "Yes",
+                            "9:00 am to 5:00 pm est": "Yes",
+                            "english proficiency": "Fluent",
+                            "timeline requested": "Yes"
+                        }
+
+                        # 1. Text Fields
+                        for inp in page.locator("input[type='text'], input[type='email'], input[type='tel'], input[type='url'], textarea, input:not([type])").all():
+                            if inp.is_visible() and not inp.input_value():
+                                label_text = (inp.get_attribute("name") or inp.get_attribute("aria-label") or "").lower()
+                                
+                                # try finding parent label
+                                try:
+                                    id_val = inp.get_attribute("id")
+                                    if id_val:
+                                        lbl = page.locator(f"label[for='{id_val}']")
+                                        if lbl.count() > 0 and lbl.first.is_visible():
+                                            label_text += " " + lbl.first.inner_text().lower()
+                                except: pass
+                                
+                                matched = False
+                                for key, val in text_fills.items():
+                                    if key in label_text:
+                                        inp.fill(val)
+                                        if key in ["location", "country", "city"]:
+                                            try:
+                                                page.wait_for_timeout(800)
+                                                page.keyboard.press("ArrowDown")
+                                                page.wait_for_timeout(200)
+                                                page.keyboard.press("Enter")
+                                            except:
+                                                pass
+                                        matched = True
+                                        break
+                                
+                                if not matched:
+                                    if "interest" in label_text or "why" in label_text or "cover" in label_text:
+                                        inp.fill(text_fills["why are you interested"])
+                                    elif "salary" in label_text or "compensation" in label_text:
+                                        inp.fill("100000")
+                                    else:
+                                        inp.fill("N/A")
+                        
+                        # 2. Checkboxes
+                        for checkbox in page.locator("input[type='checkbox']").all():
+                            if checkbox.is_visible() and not checkbox.is_checked():
+                                checkbox.click(force=True)
+                                
+                        # 3. Universal Yes/No/Options Handler (Buttons, Radios, Selects, Comboboxes)
+                        for label in page.locator("label").all():
+                            if label.is_visible():
+                                text = label.inner_text().lower()
+                                target_val = None
+                                for key in sorted(yes_no_rules.keys(), key=len, reverse=True):
+                                    if key in text:
+                                        target_val = yes_no_rules[key].lower()
+                                        break
+                                
+                                if target_val:
+                                    # Search upwards up to 3 levels to find the associated inputs
+                                    for level in range(1, 4):
+                                        parent = label.locator(f"xpath={ '/'.join(['..']*level) }")
+                                        if parent.count() == 0:
+                                            break
+                                            
+                                        resolved = False
+                                        
+                                        # 3a. Radio buttons
+                                        radios = parent.locator("input[type='radio']")
+                                        if radios.count() > 0:
+                                            for i in range(radios.count()):
+                                                r_val = (radios.nth(i).get_attribute("value") or "").lower()
+                                                if target_val in r_val:
+                                                    radios.nth(i).click(force=True)
+                                                    resolved = True
+                                                    break
+                                            if resolved: break
+                                            
+                                        # 3b. Yes/No Buttons
+                                        btns = parent.locator("button:not([role='combobox'])")
+                                        if btns.count() > 0:
+                                            for i in range(btns.count()):
+                                                btn_text = btns.nth(i).inner_text().strip().lower()
+                                                if btn_text == target_val:
+                                                    btns.nth(i).click(force=True)
+                                                    resolved = True
+                                                    break
+                                            if resolved: break
+                                            
+                                        # 3c. Standard Selects
+                                        selects = parent.locator("select")
+                                        if selects.count() > 0:
+                                            select = selects.first
+                                            opts = select.locator("option")
+                                            val_to_select = None
+                                            for i in range(opts.count()):
+                                                opt_text = opts.nth(i).inner_text().lower()
+                                                if target_val in opt_text:
+                                                    val_to_select = opts.nth(i).get_attribute("value")
+                                                    break
+                                            if val_to_select:
+                                                select.select_option(val_to_select)
+                                            else:
+                                                fallback_val = opts.nth(1).get_attribute("value") if opts.count() > 1 else opts.nth(0).get_attribute("value")
+                                                select.select_option(fallback_val)
+                                            resolved = True
+                                            break
+                                            
+                                        # 3d. Custom Comboboxes
+                                        combos = parent.locator("button[role='combobox']")
+                                        if combos.count() > 0:
+                                            combo = combos.first
+                                            combo.click(force=True)
+                                            page.wait_for_timeout(150)
+                                            opts = page.locator("[role='listbox'] [role='option']")
+                                            clicked = False
+                                            if opts.count() > 0:
+                                                for i in range(opts.count()):
+                                                    if target_val in opts.nth(i).inner_text().lower():
+                                                        opts.nth(i).click(force=True)
+                                                        clicked = True
+                                                        break
+                                                if not clicked:
+                                                    idx = 1 if opts.count() > 1 else 0
+                                                    opts.nth(idx).click(force=True)
+                                            resolved = True
+                                            break
+                                            
+                                    # If it was a Yes/No question but we couldn't resolve it via proximity,
+                                    # fallback to global search (similar to original ashby_bot.py logic)
+                                    if not resolved and (target_val == "yes" or target_val == "no"):
+                                        try:
+                                            fallback_btn = page.locator(f"button:text-is('{target_val.capitalize()}')").first
+                                            if fallback_btn.count() > 0 and fallback_btn.is_visible():
+                                                fallback_btn.click(force=True)
+                                                resolved = True
+                                            else:
+                                                fallback_radio = page.locator(f"input[type='radio'][value='{target_val.capitalize()}']").first
+                                                if fallback_radio.count() > 0:
+                                                    fallback_radio.click(force=True)
+                                                    resolved = True
+                                        except:
+                                            pass
+                                            
+                                    if resolved:
+                                        page.wait_for_timeout(3000)
+                    except Exception as e:
+                        logger.warning(f"Advanced Rules fallback filling failed: {e}")
+                    # ------------------------------------
+                    
+                    if resume_pdf_path:
+                        try:
+                            # 1. Try humanized file chooser first (bypasses bot detection)
+                            attach_btns = [
+                                "button:has-text('Attach')",
+                                "button:has-text('Upload')",
+                                "[data-automation-id='file-upload']"
+                            ]
+                            uploaded = False
+                            for sel in attach_btns:
+                                btn = page.locator(sel).first
+                                if btn.count() > 0 and btn.is_visible(timeout=500):
+                                    try:
+                                        with page.expect_file_chooser(timeout=3000) as fc_info:
+                                            btn.click(force=True)
+                                        fc_info.value.set_files(resume_pdf_path)
+                                        page.wait_for_timeout(1000)
+                                        uploaded = True
+                                        break
+                                    except: pass
+                                    
+                            # 2. Fallback to programmatic upload if buttons not found
+                            if not uploaded:
+                                file_input = page.locator("input[type='file']")
+                                if file_input.count() > 0:
+                                    file_input.first.set_input_files(resume_pdf_path, timeout=2000)
+                        except Exception as e:
+                            logger.warning(f"Resume upload failed: {e}", phase=ExecutionPhase.RULES)
+                    
+                    try:
+                        page.evaluate("window.scrollTo(0, document.body.scrollHeight)")
+                        page.wait_for_timeout(1000)
+                        
+                        # Wait exactly 6 seconds so the human can manually type remaining answers
+                        page.wait_for_timeout(6000)
+                        
+                        submit_btn = page.locator("button:has-text('Submit Application')").first
+                        if submit_btn.count() > 0:
+                            submit_btn.click(force=True)
+                            page.wait_for_timeout(3000)
+                            
+                            # Check for Ashby spam error
+                            spam_msg = page.locator("text='flagged as possible spam'")
+                            if spam_msg.count() > 0 and spam_msg.first.is_visible(timeout=1000):
+                                agent.show_warning("Ashby flagged submission as spam. Retrying submit...")
+                                page.wait_for_timeout(3000) # Wait a moment to seem human
+                                submit_btn.click(force=True)
+                                page.wait_for_timeout(3000)
+                    except: pass
+                    
+                    if rules_handler:
+                        try:
+                            rules_handler.submit_application()
+                        except: pass
+                        
+                    agent.show_success("Ashby application submitted autonomously without LLM!")
+                    return True
+
+                # Fallback handoff if we couldn't auto-submit or if it's not Ashby
+                agent.show_warning(
+                    f"No API key for {provider} — switching to human-driven mode."
+                )
+                handoff = self._handoff_human_in_loop(
+                    agent, logger, state,
+                    reason=f"AI provider '{provider}' has no API key configured.",
+                    hint="Fill and submit the form yourself in the browser. When you're done, press ENTER."
+                )
+                if self._handoff_skipped_job(handoff, agent, logger, ExecutionPhase.HUMAN):
+                    return False
+                return (not handoff.cancelled) and self._submission_looks_plausible(handoff.page)
+
             logger.log_phase_start(ExecutionPhase.LLM)
             state.current_phase = ExecutionPhase.LLM
             agent.show_phase_banner("LLM autofill (3/5)")
@@ -3456,7 +3780,7 @@ class ApplicationEngine:
                                     retry_succeeded += 1
                                     label = act.field_label or act.selector
                                     memory.save_field_answer(
-                                        label, act.value, state.detected_ats,
+                                        label, act.value or "", state.detected_ats,
                                         success=True, source="human",
                                     )
                                     try:

@@ -226,9 +226,7 @@ class JobRepository:
         jobs = (
             self.session.query(JobModel)
             .filter(
-                JobModel.status == ApplicationStatus.PENDING,
-                JobModel.is_cli_friendly == True,
-                or_(JobModel.is_already_applied == False, JobModel.is_already_applied.is_(None)),
+                JobModel.status == ApplicationStatus.PENDING
             )
             .order_by(nullslast(JobModel.listing_created_at.desc()), JobModel.id.desc())
             .all()

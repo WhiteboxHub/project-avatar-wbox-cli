@@ -1,6 +1,6 @@
 """Tests for canonical job URL normalization."""
 
-from jobcli.core.url_normalize import normalize_job_url
+from jobcli.utils.url_normalize import normalize_job_url
 
 
 def test_normalize_strips_utm_and_lowercases_host() -> None:

@@ -14,6 +14,11 @@ from jobcli.profile.schemas import ExecutionPhase
 _ACCEPT_BUTTON_SELECTORS: tuple[str, ...] = (
     "button:has-text('Accept')",
     "button:has-text('Accept All')",
+    "button:has-text('Accept all')",
+    "text=Accept all",
+    "text=Accept All",
+    "a:has-text('Accept All')",
+    "[role='button']:has-text('Accept All')",
     "button:has-text('Accept Cookies')",
     "button:has-text('I Accept')",
     "button:has-text('Agree')",

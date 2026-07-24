@@ -3,7 +3,7 @@
 import json
 import os
 import re
-from typing import Any, Optional, List, Union
+from typing import Any, Optional, List, Union, Callable
 
 from playwright.sync_api import FrameLocator, Page
 
@@ -700,7 +700,7 @@ class ToolExecutor:
         # Using each candidate_name maximises the chance of matching when
         # the LLM emits "Name*" but the DOM label is "Name" / "name" /
         # "full_name".
-        attempt_specs: list[tuple[str, callable]] = []
+        attempt_specs: list[tuple[str, Callable]] = []
         for cn in candidate_names:
             # Escape single-quotes for the CSS attribute selectors.
             cn_css = cn.replace("'", "\\'")
@@ -1744,7 +1744,7 @@ class ToolExecutor:
         dedupe_key = f"{(target_label or '').lower().strip()}::{file_path}"
 
         # All roots: main page + actual child Frame objects
-        search_roots = [self.page]
+        search_roots: list[Any] = [self.page]
         for frame in self.page.frames:
             if frame != self.page.main_frame:
                 search_roots.append(frame)

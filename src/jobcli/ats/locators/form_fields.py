@@ -859,6 +859,21 @@ class FormFiller:
 
         return results
 
+    def fill_summary(self) -> bool:
+        """Fill summary text area if present."""
+        summary_text = (
+            "I'm excited about this opportunity because it aligns closely with my "
+            "interest in building modern, user-focused web applications. I enjoy "
+            "working with technologies like React and Next.js, and I'm particularly "
+            "interested in collaborating with cross-functional teams to create intuitive, "
+            "high-quality user experiences. The emphasis on scalable frontend "
+            "architecture and thoughtful design makes this role especially appealing."
+        )
+        return self.field_locator.fill_text_field(
+            ["Summary", "Additional Information", "Cover Letter", "Tell us about yourself"],
+            summary_text
+        )
+
     def fill_all(self, resume_path: Optional[str] = None) -> dict[str, Any]:
         """Fill all detected form fields."""
         results: dict[str, Any] = {}
@@ -873,6 +888,7 @@ class FormFiller:
 
         results["work_authorization"] = self.fill_work_authorization()
         results["demographics"] = self.fill_demographics()
+        results["summary"] = self.fill_summary()
 
         if self.logger:
             personal_results = results.get("personal_info", {})
