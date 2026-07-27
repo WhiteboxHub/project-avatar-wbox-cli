@@ -859,8 +859,9 @@ Return valid JSON matching the system schema. Use lowercase action names.
             "If it is null or missing, leave the LinkedIn field **blank** — do not type placeholders or partial handles (ATS validation will fail).\n"
             "17. **COMMON SENSE DEDUCTION & LONG-FORM ANSWERS**: Act as a human proxy using aggressive common sense.\n"
             "   a. If a form asks for a value that is NOT explicitly in the exact form in the JSON, intelligently deduce it. "
-            "For example: derive Country (United States) from City (San Francisco); logically deduce pronouns (he/him) & sexual orientation (heterosexual/straight) from Gender (Male); "
-            "map raw boolean work auth JSON to exact phrase requirements ('Yes, I am authorized', 'No, I do not need sponsorship'). Do NOT be overly strict.\n"
+            "For example: derive Country (United States) from City (San Francisco); logically deduce pronouns (he/him) from Gender (Male); "
+            "map raw boolean work auth JSON to exact phrase requirements ('Yes, I am authorized'). "
+            "CRITICAL EXCEPTION: NEVER answer demographic questions like sexual orientation, race, disability, or veteran status. Always leave them completely blank so the human can answer them manually.\n"
             "   b. If the form asks an open-ended long-form question (e.g., 'Describe a project you are proud of', 'Why do you want to work here?', 'What are your career goals?'), DO NOT write the same generic robotic answer every time. Tailor a unique, compelling, professional, and thoughtful 2-4 sentence response specifically addressing the exact prompt. Write from the first-person perspective, draw organically upon the user's specific skills and experience from the JSON, and make it sound like a real human wrote it. Do not hallucinate experience that isn't in the JSON.\n"
         )
         if task == "fill_form_fields_only":

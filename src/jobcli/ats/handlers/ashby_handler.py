@@ -120,7 +120,6 @@ class AshbyHandler(GenericATSHandler):
                 el = self.page.query_selector(selector)
                 if el and el.is_visible():
                     el.click(timeout=3000)
-                    self.wait_for_page_load()
                     return True
             except Exception as e:
                 if self.logger:

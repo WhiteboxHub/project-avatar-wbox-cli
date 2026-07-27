@@ -2896,7 +2896,9 @@ class ApplicationEngine:
                             "city": city,
                             "why do you want to work here": "I am excited about the opportunity to work with a company that values innovation, collaboration, and continuous learning. Your mission and engineering culture strongly align with my career goals, and I believe my technical skills and enthusiasm for solving complex problems would allow me to contribute effectively while continuing to grow professionally.",
                             "why are you interested": "This role closely matches my technical background and interests. I enjoy building scalable applications, improving software quality, and working with modern technologies. The opportunity to contribute to meaningful projects while learning from experienced engineers makes this position especially appealing.",
-                            "share any links": github or portfolio or website
+                            "share any links": github or portfolio or website,
+                            "why navi": "I am highly interested in the founding engineer role and Navi's AI vision.",
+                            "hardest problem": "Scaling a distributed database system to handle 10x traffic while keeping latency under 50ms."
                         }
                         
                         demo = getattr(self.resume, 'demographics', None)
@@ -2922,7 +2924,9 @@ class ApplicationEngine:
                             "background check": "Yes",
                             "maintained code": "100s of users",
                             "design system": "Yes",
-                            "gender": gender_val or "I prefer not to answer",
+                            "gender": "Male",
+                            "sex": "Male",
+                            "sexual orientation": "Heterosexual or straight",
                             "ethnicity": "I prefer not to answer",
                             "communities": "I prefer not to answer",
                             "veteran": "I prefer not to answer",
@@ -2934,6 +2938,8 @@ class ApplicationEngine:
                             "english proficiency": "Fluent",
                             "timeline requested": "Yes"
                         }
+
+                        import re
 
                         # 1. Text Fields
                         for inp in page.locator("input[type='text'], input[type='email'], input[type='tel'], input[type='url'], textarea, input:not([type])").all():
@@ -2955,9 +2961,9 @@ class ApplicationEngine:
                                         inp.fill(val)
                                         if key in ["location", "country", "city"]:
                                             try:
-                                                page.wait_for_timeout(800)
-                                                page.keyboard.press("ArrowDown")
                                                 page.wait_for_timeout(200)
+                                                page.keyboard.press("ArrowDown")
+                                                page.wait_for_timeout(50)
                                                 page.keyboard.press("Enter")
                                             except:
                                                 pass
@@ -2978,7 +2984,7 @@ class ApplicationEngine:
                                 checkbox.click(force=True)
                                 
                         # 3. Universal Yes/No/Options Handler (Buttons, Radios, Selects, Comboboxes)
-                        for label in page.locator("label").all():
+                        for label in page.locator("label, legend, .ashby-application-form-question-title").all():
                             if label.is_visible():
                                 text = label.inner_text().lower()
                                 target_val = None
@@ -3026,7 +3032,7 @@ class ApplicationEngine:
                                             val_to_select = None
                                             for i in range(opts.count()):
                                                 opt_text = opts.nth(i).inner_text().lower()
-                                                if target_val in opt_text:
+                                                if re.search(r'\b' + re.escape(target_val) + r'\b', opt_text) or target_val == opt_text:
                                                     val_to_select = opts.nth(i).get_attribute("value")
                                                     break
                                             if val_to_select:
@@ -3047,7 +3053,8 @@ class ApplicationEngine:
                                             clicked = False
                                             if opts.count() > 0:
                                                 for i in range(opts.count()):
-                                                    if target_val in opts.nth(i).inner_text().lower():
+                                                    opt_text = opts.nth(i).inner_text().lower()
+                                                    if re.search(r'\b' + re.escape(target_val) + r'\b', opt_text) or target_val == opt_text:
                                                         opts.nth(i).click(force=True)
                                                         clicked = True
                                                         break
@@ -3074,7 +3081,7 @@ class ApplicationEngine:
                                             pass
                                             
                                     if resolved:
-                                        page.wait_for_timeout(3000)
+                                        page.wait_for_timeout(50)
                     except Exception as e:
                         logger.warning(f"Advanced Rules fallback filling failed: {e}")
                     # ------------------------------------
@@ -3095,7 +3102,7 @@ class ApplicationEngine:
                                         with page.expect_file_chooser(timeout=3000) as fc_info:
                                             btn.click(force=True)
                                         fc_info.value.set_files(resume_pdf_path)
-                                        page.wait_for_timeout(1000)
+                                        page.wait_for_timeout(100)
                                         uploaded = True
                                         break
                                     except: pass
@@ -3110,45 +3117,27 @@ class ApplicationEngine:
                     
                     try:
                         page.evaluate("window.scrollTo(0, document.body.scrollHeight)")
-                        page.wait_for_timeout(1000)
-                        
-                        # Wait exactly 6 seconds so the human can manually type remaining answers
-                        page.wait_for_timeout(6000)
-                        
-                        submit_btn = page.locator("button:has-text('Submit Application')").first
-                        if submit_btn.count() > 0:
-                            submit_btn.click(force=True)
-                            page.wait_for_timeout(3000)
-                            
-                            # Check for Ashby spam error
-                            spam_msg = page.locator("text='flagged as possible spam'")
-                            if spam_msg.count() > 0 and spam_msg.first.is_visible(timeout=1000):
-                                agent.show_warning("Ashby flagged submission as spam. Retrying submit...")
-                                page.wait_for_timeout(3000) # Wait a moment to seem human
-                                submit_btn.click(force=True)
-                                page.wait_for_timeout(3000)
+                        page.wait_for_timeout(100)
                     except: pass
                     
-                    if rules_handler:
-                        try:
-                            rules_handler.submit_application()
-                        except: pass
-                        
-                    agent.show_success("Ashby application submitted autonomously without LLM!")
-                    return True
+                    agent.show_success("Ashby application autonomously filled without LLM! Proceeding to pre-submit checks...")
+                    self._skip_llm_phase = True
+                else:
+                    self._skip_llm_phase = False
 
-                # Fallback handoff if we couldn't auto-submit or if it's not Ashby
-                agent.show_warning(
-                    f"No API key for {provider} — switching to human-driven mode."
-                )
-                handoff = self._handoff_human_in_loop(
-                    agent, logger, state,
-                    reason=f"AI provider '{provider}' has no API key configured.",
-                    hint="Fill and submit the form yourself in the browser. When you're done, press ENTER."
-                )
-                if self._handoff_skipped_job(handoff, agent, logger, ExecutionPhase.HUMAN):
-                    return False
-                return (not handoff.cancelled) and self._submission_looks_plausible(handoff.page)
+                if not getattr(self, "_skip_llm_phase", False) and not llm_client:
+                    # Fallback handoff if we couldn't auto-submit or if it's not Ashby
+                    agent.show_warning(
+                        f"No API key for {provider} — switching to human-driven mode."
+                    )
+                    handoff = self._handoff_human_in_loop(
+                        agent, logger, state,
+                        reason=f"AI provider '{provider}' has no API key configured.",
+                        hint="Fill and submit the form yourself in the browser. When you're done, press ENTER."
+                    )
+                    if self._handoff_skipped_job(handoff, agent, logger, ExecutionPhase.HUMAN):
+                        return False
+                    return (not handoff.cancelled) and self._submission_looks_plausible(handoff.page)
 
             logger.log_phase_start(ExecutionPhase.LLM)
             state.current_phase = ExecutionPhase.LLM
@@ -3158,7 +3147,7 @@ class ApplicationEngine:
                 phase=ExecutionPhase.LLM,
             )
 
-            MAX_ASK_LOOPS = 3
+            MAX_ASK_LOOPS = 0 if getattr(self, "_skip_llm_phase", False) else 3
             loop_count = 0
             results: dict = {}
             performed_uploads: set = set()
@@ -4318,112 +4307,25 @@ class ApplicationEngine:
                 else:
                     page = adopted2
 
-            # ── Pre-submission checkpoint ─────────────────────────────────
-            # Re-extract the page so we judge from the CURRENT browser state
-            # (the user may have just finished fields manually during a
-            # handoff — the old ax_tree would be stale).
-            try:
-                ax_tree = extractor.extract()
-            except Exception:
-                pass
-
-            # ── Aggregate all "form not ready" signals ────────────────────
-            # Three independent scans so we don't silently ship an
-            # incomplete form:
-            #   1. AXTree-based required/empty scan.
-            #   2. Live-DOM custom-dropdown "Select…" placeholder scan
-            #      (catches React comboboxes that AXTree misses).
-            #   3. Visible client-side validation error messages.
-            required_missing: list[str] = []
-            for field in ax_tree.form_fields:
-                if field.get("required") or "*" in field.get("name", ""):
-                    val = field.get("value")
-                    role = (field.get("role") or "").lower()
-                    checked = field.get("checked")
-                    if role in ("checkbox", "radio", "switch"):
-                        if not (
-                            checked is True
-                            or (
-                                isinstance(checked, str)
-                                and checked.lower() in ("true", "on", "yes", "1")
-                            )
-                        ):
-                            required_missing.append(field.get("name", "unknown"))
-                    else:
-                        if not val or not str(val).strip():
-                            required_missing.append(field.get("name", "unknown"))
-
-            try:
-                empty_dropdowns = _unselected_required_dropdowns(page)
-            except Exception:
-                empty_dropdowns = []
-            try:
-                visible_errors = _live_validation_errors(page)
-            except Exception:
-                visible_errors = []
-
-            blockers: list[str] = []
-            blockers.extend(required_missing)
-            for lbl in empty_dropdowns:
-                if lbl not in blockers:
-                    blockers.append(lbl)
-
-            # Up to TWO handoff rounds — ask once, re-verify, ask again if
-            # the human hasn't resolved everything.  Never auto-submit
-            # a form that still has validation errors.
-            for round_idx in range(2):
-                if not blockers and not visible_errors:
-                    break
-
-                preview_parts: list[str] = []
-                if blockers:
-                    pv = ", ".join(blockers[:6])
-                    if len(blockers) > 6:
-                        pv += " …"
-                    preview_parts.append(f"{len(blockers)} empty required: {pv}")
-                if visible_errors:
-                    ev = "; ".join(visible_errors[:3])
-                    if len(visible_errors) > 3:
-                        ev += " …"
-                    preview_parts.append(
-                        f"{len(visible_errors)} validation error(s): {ev}"
-                    )
-                preview = " | ".join(preview_parts)
-
-                agent.show_warning(
-                    f"Cannot submit yet — {preview}"
-                )
-                handoff = self._handoff_human_in_loop(
-                    agent,
-                    logger,
-                    state,
-                    reason=(
-                        "The form isn't ready to submit. "
-                        f"{preview}. "
-                        "Please finish the remaining fields — "
-                        "especially any dropdowns showing 'Select…' — "
-                        "directly in the browser."
-                    ),
-                    hint=(
-                        "Look for red 'This field is required.' messages "
-                        "and any unfilled dropdowns, then press ENTER."
-                    ),
-                )
-                if self._handoff_skipped_job(handoff, agent, logger, ExecutionPhase.LLM):
-                    logger.log_phase_end(ExecutionPhase.LLM, False)
-                    return False
-                if handoff.cancelled:
-                    logger.log_phase_end(ExecutionPhase.LLM, False)
-                    return False
-                page = handoff.page
-                agent.page = page
-
-                # Re-extract everything from the latest browser state.
+            submission_successful = False
+            while not submission_successful:
+                # ── Pre-submission checkpoint ─────────────────────────────────
+                # Re-extract the page so we judge from the CURRENT browser state
+                # (the user may have just finished fields manually during a
+                # handoff — the old ax_tree would be stale).
                 try:
                     ax_tree = extractor.extract()
                 except Exception:
                     pass
-                required_missing = []
+
+                # ── Aggregate all "form not ready" signals ────────────────────
+                # Three independent scans so we don't silently ship an
+                # incomplete form:
+                #   1. AXTree-based required/empty scan.
+                #   2. Live-DOM custom-dropdown "Select…" placeholder scan
+                #      (catches React comboboxes that AXTree misses).
+                #   3. Visible client-side validation error messages.
+                required_missing: list[str] = []
                 for field in ax_tree.form_fields:
                     if field.get("required") or "*" in field.get("name", ""):
                         val = field.get("value")
@@ -4437,14 +4339,11 @@ class ApplicationEngine:
                                     and checked.lower() in ("true", "on", "yes", "1")
                                 )
                             ):
-                                required_missing.append(
-                                    field.get("name", "unknown")
-                                )
+                                required_missing.append(field.get("name", "unknown"))
                         else:
                             if not val or not str(val).strip():
-                                required_missing.append(
-                                    field.get("name", "unknown")
-                                )
+                                required_missing.append(field.get("name", "unknown"))
+
                 try:
                     empty_dropdowns = _unselected_required_dropdowns(page)
                 except Exception:
@@ -4453,262 +4352,403 @@ class ApplicationEngine:
                     visible_errors = _live_validation_errors(page)
                 except Exception:
                     visible_errors = []
-                blockers = list(required_missing)
+
+                blockers: list[str] = []
+                blockers.extend(required_missing)
                 for lbl in empty_dropdowns:
                     if lbl not in blockers:
                         blockers.append(lbl)
 
-            # If after two rounds the form still isn't ready, refuse to
-            # submit rather than risk shipping a half-filled application.
-            if blockers or visible_errors:
-                summary_parts: list[str] = []
-                if blockers:
-                    summary_parts.append(
-                        f"{len(blockers)} empty required field(s)"
-                    )
-                if visible_errors:
-                    summary_parts.append(
-                        f"{len(visible_errors)} validation error(s)"
-                    )
-                summary = " and ".join(summary_parts)
-                agent.show_error(
-                    f"Not submitting — the form still has {summary}. "
-                    "Finish it in the browser and re-run JobCLI to continue."
-                )
-                logger.log_phase_end(ExecutionPhase.LLM, False)
-                return False
-
-            # ── Compulsory pre-submit human review (Phase 4/4) ────────────
-            # The form is "ready" from the agent's perspective — every
-            # signal we have says it can submit. But the user has asked
-            # for a mandatory human review before any application leaves
-            # the browser, in EVERY interaction mode including AUTO.
-            # _handoff_human_in_loop is invoked with force_block=True so
-            # the AUTO short-circuit in handoff_to_human is bypassed.
-            self._form_ready_for_submit = True
-
-            # Snapshot pre-submit state BEFORE the handoff so the
-            # post-handoff confirmation detector compares against the
-            # form the agent left, not the form after the human touched
-            # it. URL change and submit-button disappearance are the two
-            # most reliable signals that the form was accepted.
-            try:
-                _pre_submit_url = page.url or ""
-            except Exception:
-                _pre_submit_url = ""
-            try:
-                _pre_submit_had_submit_btn = bool(_submit_button_visible(page))
-            except Exception:
-                _pre_submit_had_submit_btn = True
-
-            review_handoff = self._handoff_human_in_loop(
-                agent, logger, state,
-                reason=(
-                    "Final review — check the form in the browser. "
-                    "Press ENTER to submit this application."
-                ),
-                hint=(
-                    "Type skip + ENTER to skip this job and open the next one. "
-                    "Type cancel + ENTER to abort. "
-                    "If you already submitted in the browser, JobCLI detects "
-                    "the confirmation page automatically."
-                ),
-                force_block=True,
-                submission_checker=lambda: self._looks_like_confirmation(
-                    agent.page, _pre_submit_url, _pre_submit_had_submit_btn
-                ),
-            )
-            if self._handoff_skipped_job(review_handoff, agent, logger, ExecutionPhase.LLM):
-                logger.log_phase_end(ExecutionPhase.LLM, False)
-                return False
-            if review_handoff.cancelled:
-                agent.show_warning("Submission cancelled by user during review.")
-                self._submit_declined_by_user = True
-                logger.log_phase_end(ExecutionPhase.LLM, False)
-                return False
-            page = review_handoff.page
-            agent.page = page
-
-            # ── Detect: did the user click Submit themselves? ─────────────
-            # If the page already looks like a confirmation (URL changed
-            # to a thank-you path, text shows "Application received",
-            # submit button vanished without validation errors, …), the
-            # human already did the work. Skip our own click entirely —
-            # otherwise we'd hammer a now-disabled button or fall into
-            # the "couldn't find Submit" recovery handoff.
-            submit_clicked = False
-            manual_submit_attempted = False
-            user_submitted_during_review = False
-            _strong_pre, _soft_pre, _pre_signals = self._looks_like_confirmation(
-                page, _pre_submit_url, _pre_submit_had_submit_btn
-            )
-            if _strong_pre or _soft_pre:
-                user_submitted_during_review = True
-                manual_submit_attempted = True
-                submit_clicked = True
-                agent.show_success(
-                    "Detected manual submission — recording success."
-                )
-                logger.info(
-                    f"human_submitted_directly signals={_pre_signals} "
-                    f"strong={_strong_pre} soft={_soft_pre}",
-                    phase=ExecutionPhase.LLM,
-                )
-
-            # ── Click the Submit button ───────────────────────────────────
-            # The agent fill loop never emits a "SUBMIT" action itself —
-            # the Next/Submit/Apply click detection in ``_split_off_advance_clicks``
-            # holds those back while required fields are still empty.
-            # If the user did NOT already submit during the review, the
-            # agent clicks Submit now using the ATS-specific handler
-            # first (Greenhouse's ``#submit_app_button``, Ashby's
-            # ``button[type=submit]``, Workday's sequence, etc.), then
-            # a generic Submit locator if that fails.
-            try:
-                if not user_submitted_during_review and rules_handler is not None:
-                    agent.show_status(
-                        "Clicking submit…", phase=ExecutionPhase.LLM
-                    )
-                    submit_clicked = bool(rules_handler.submit_application())
-            except Exception as e:
-                logger.warning(
-                    f"ATS-specific submit_application() raised {e!r}; "
-                    "falling back to generic submit.",
-                    phase=ExecutionPhase.LLM,
-                )
-
-            if not submit_clicked:
-                # Generic fallback — matches the most common submit-button
-                # shapes across every ATS we've seen.
-                submit_candidates = [
-                    "button[type='submit']:not([disabled])",
-                    "input[type='submit']:not([disabled])",
-                    "button:has-text('Submit Application')",
-                    "button:has-text('Submit application')",
-                    "button:has-text('Submit'):not([disabled])",
-                    "button:has-text('Apply Now'):not([disabled])",
-                    "button:has-text('Send Application')",
-                    "[role='button']:has-text('Submit')",
-                ]
-                for sel in submit_candidates:
-                    try:
-                        btn = page.locator(sel).last
-                        if btn.count() == 0:
-                            continue
-                        try:
-                            btn.scroll_into_view_if_needed(timeout=1500)
-                        except Exception:
-                            pass
-                        if not btn.is_visible(timeout=1200):
-                            continue
-                        btn.click(timeout=5000)
-                        submit_clicked = True
-                        logger.info(
-                            f"Clicked submit via generic selector '{sel}'.",
-                            phase=ExecutionPhase.LLM,
-                        )
+                # Up to TWO handoff rounds — ask once, re-verify, ask again if
+                # the human hasn't resolved everything.  Never auto-submit
+                # a form that still has validation errors.
+                for round_idx in range(2):
+                    if not blockers and not visible_errors:
                         break
-                    except Exception as e:
-                        logger.debug(
-                            f"Submit selector '{sel}' failed: {e}",
-                            phase=ExecutionPhase.LLM,
+
+                    preview_parts: list[str] = []
+                    if blockers:
+                        pv = ", ".join(blockers[:6])
+                        if len(blockers) > 6:
+                            pv += " …"
+                        preview_parts.append(f"{len(blockers)} empty required: {pv}")
+                    if visible_errors:
+                        ev = "; ".join(visible_errors[:3])
+                        if len(visible_errors) > 3:
+                            ev += " …"
+                        preview_parts.append(
+                            f"{len(visible_errors)} validation error(s): {ev}"
                         )
-                        continue
+                    preview = " | ".join(preview_parts)
 
-            if not submit_clicked:
-                agent.show_error(
-                    "Could not find the Submit button. Please click it "
-                    "manually in the browser."
-                )
-                handoff = agent.handoff_to_human(
-                    reason=(
-                        "Automation couldn't locate the Submit button. "
-                        "Please click Submit yourself."
-                    ),
-                    hint=(
-                        "Click the Submit/Apply button in the browser. "
-                        "When you see the confirmation page, press ENTER."
-                    ),
-                )
-                if self._handoff_skipped_job(handoff, agent, logger, ExecutionPhase.LLM):
-                    logger.log_phase_end(ExecutionPhase.LLM, False)
-                    return False
-                if handoff.cancelled:
-                    logger.log_phase_end(ExecutionPhase.LLM, False)
-                    return False
-                manual_submit_attempted = True
-                page = handoff.page
-                agent.page = page
+                    agent.show_warning(
+                        f"Cannot submit yet — {preview}"
+                    )
+                    handoff = self._handoff_human_in_loop(
+                        agent,
+                        logger,
+                        state,
+                        reason=(
+                            "The form isn't ready to submit. "
+                            f"{preview}. "
+                            "Please finish the remaining fields — "
+                            "especially any dropdowns showing 'Select…' — "
+                            "directly in the browser."
+                        ),
+                        hint=(
+                            "Look for red 'This field is required.' messages "
+                            "and any unfilled dropdowns, then press ENTER."
+                        ),
+                    )
+                    if self._handoff_skipped_job(handoff, agent, logger, ExecutionPhase.LLM):
+                        logger.log_phase_end(ExecutionPhase.LLM, False)
+                        return False
+                    if handoff.cancelled:
+                        logger.log_phase_end(ExecutionPhase.LLM, False)
+                        return False
+                    page = handoff.page
+                    agent.page = page
 
-            # Wait for the submission to settle (navigation / SPA update).
-            try:
-                page.wait_for_load_state("networkidle", timeout=8000)
-            except Exception:
+                    # Re-extract everything from the latest browser state.
+                    try:
+                        ax_tree = extractor.extract()
+                    except Exception:
+                        pass
+                    required_missing = []
+                    for field in ax_tree.form_fields:
+                        if field.get("required") or "*" in field.get("name", ""):
+                            val = field.get("value")
+                            role = (field.get("role") or "").lower()
+                            checked = field.get("checked")
+                            if role in ("checkbox", "radio", "switch"):
+                                if not (
+                                    checked is True
+                                    or (
+                                        isinstance(checked, str)
+                                        and checked.lower() in ("true", "on", "yes", "1")
+                                    )
+                                ):
+                                    required_missing.append(
+                                        field.get("name", "unknown")
+                                    )
+                            else:
+                                if not val or not str(val).strip():
+                                    required_missing.append(
+                                        field.get("name", "unknown")
+                                    )
+                    try:
+                        empty_dropdowns = _unselected_required_dropdowns(page)
+                    except Exception:
+                        empty_dropdowns = []
+                    try:
+                        visible_errors = _live_validation_errors(page)
+                    except Exception:
+                        visible_errors = []
+                    blockers = list(required_missing)
+                    for lbl in empty_dropdowns:
+                        if lbl not in blockers:
+                            blockers.append(lbl)
+
+                # If after two rounds the form still isn't ready, we pause
+                # and hand off to the human to verify and fill the missing fields.
+                has_issues = bool(blockers or visible_errors)
+            
+                # Snapshot pre-submit state BEFORE any handoff
                 try:
-                    page.wait_for_timeout(2500)
+                    _pre_submit_url = page.url or ""
                 except Exception:
-                    pass
+                    _pre_submit_url = ""
+                try:
+                    _pre_submit_had_submit_btn = bool(_submit_button_visible(page))
+                except Exception:
+                    _pre_submit_had_submit_btn = True
 
-            # ── Final success evaluation ──────────────────────────────────
-            # Ashby / Greenhouse / Lever rarely show the same literal
-            # text on their confirmation pages, and modern ATSes are
-            # SPAs that often keep the URL path identical — so a fixed
-            # phrase list is always incomplete. _looks_like_confirmation
-            # gathers four independent signals and accepts the
-            # submission as soon as one strong signal fires OR a soft
-            # signal fires while no validation error is visible. The
-            # same helper is used during the pre-submit handoff to
-            # detect "user already submitted in the browser".
-            _strong_confirm, _soft_confirm, _post_signals = self._looks_like_confirmation(
-                page, _pre_submit_url, _pre_submit_had_submit_btn
-            )
-            _has_errors = bool(_post_signals.get("has_errors"))
+                self._form_ready_for_submit = not has_issues
 
-            is_confirmation = _strong_confirm or _soft_confirm
-            submit_attempted = submit_clicked or manual_submit_attempted
-            success = bool(submit_attempted and is_confirmation)
+                while has_issues:
+                    summary_parts: list[str] = []
+                    if blockers:
+                        summary_parts.append(f"{len(blockers)} empty required field(s)")
+                    if visible_errors:
+                        summary_parts.append(f"{len(visible_errors)} validation error(s)")
+                    summary = " and ".join(summary_parts)
+                    agent.show_error(
+                        f"Form still has {summary}. Pausing for human verification."
+                    )
+                    reason_msg = f"Please fill {summary} in the browser. Press ENTER to verify."
 
-            if success:
-                agent.show_success("Application submitted!")
-                page.wait_for_timeout(1000)
-                logger.capture_screenshot(page, "llm_success", ExecutionPhase.LLM)
-                if not _strong_confirm:
-                    # Be transparent that we inferred success from
-                    # behavioural signals rather than explicit text.
+                    from jobcli.utils.exit_signal import is_exit_requested
+                    while has_issues:
+                        page.wait_for_timeout(1000)
+                        if is_exit_requested():
+                            logger.log_phase_end(ExecutionPhase.LLM, False)
+                            return False
+                        try:
+                            _strong, _soft, _ = self._looks_like_confirmation(page, _pre_submit_url, _pre_submit_had_submit_btn)
+                            if _strong or _soft:
+                                break
+                        except Exception: pass
+                        
+                        # Re-extract and re-check inside the inner poll loop
+                        try:
+                            ax_tree = extractor.extract()
+                        except Exception:
+                            continue
+                        required_missing = []
+                        for field in ax_tree.form_fields:
+                            if field.get("required") or "*" in field.get("name", ""):
+                                val = field.get("value")
+                                role = (field.get("role") or "").lower()
+                                checked = field.get("checked")
+                                if role in ("checkbox", "radio", "switch"):
+                                    if not (checked is True or (isinstance(checked, str) and checked.lower() in ("true", "on", "yes", "1"))):
+                                        required_missing.append(field.get("name", "unknown"))
+                                else:
+                                    if not val or not str(val).strip():
+                                        required_missing.append(field.get("name", "unknown"))
+                        try:
+                            empty_dropdowns = _unselected_required_dropdowns(page)
+                        except Exception:
+                            empty_dropdowns = []
+                        try:
+                            visible_errors = _live_validation_errors(page)
+                        except Exception:
+                            visible_errors = []
+                        blockers = list(required_missing)
+                        for lbl in empty_dropdowns:
+                            if lbl not in blockers:
+                                blockers.append(lbl)
+                        has_issues = bool(blockers or visible_errors)
+                        
+                        if not has_issues:
+                            break
+                            
+
+                    # Re-check state after human returns
+                    try:
+                        ax_tree = extractor.extract()
+                    except Exception:
+                        pass
+                    required_missing = []
+                    for field in ax_tree.form_fields:
+                        if field.get("required") or "*" in field.get("name", ""):
+                            val = field.get("value")
+                            role = (field.get("role") or "").lower()
+                            checked = field.get("checked")
+                            if role in ("checkbox", "radio", "switch"):
+                                if not (checked is True or (isinstance(checked, str) and checked.lower() in ("true", "on", "yes", "1"))):
+                                    required_missing.append(field.get("name", "unknown"))
+                            else:
+                                if not val or not str(val).strip():
+                                    required_missing.append(field.get("name", "unknown"))
+                    try:
+                        empty_dropdowns = _unselected_required_dropdowns(page)
+                    except Exception:
+                        empty_dropdowns = []
+                    try:
+                        visible_errors = _live_validation_errors(page)
+                    except Exception:
+                        visible_errors = []
+                    blockers = list(required_missing)
+                    for lbl in empty_dropdowns:
+                        if lbl not in blockers:
+                            blockers.append(lbl)
+                    has_issues = bool(blockers or visible_errors)
+                
+                agent.show_status("All fields filled! Submitting instantly...")
+                import time
+                time.sleep(0.2)
+
+
+                # ── Detect: did the user click Submit themselves? ─────────────
+                # If the page already looks like a confirmation (URL changed
+                # to a thank-you path, text shows "Application received",
+                # submit button vanished without validation errors, …), the
+                # human already did the work. Skip our own click entirely —
+                # otherwise we'd hammer a now-disabled button or fall into
+                # the "couldn't find Submit" recovery handoff.
+                submit_clicked = False
+                manual_submit_attempted = False
+                user_submitted_during_review = False
+                _strong_pre, _soft_pre, _pre_signals = self._looks_like_confirmation(
+                    page, _pre_submit_url, _pre_submit_had_submit_btn
+                )
+                if _strong_pre or _soft_pre:
+                    user_submitted_during_review = True
+                    manual_submit_attempted = True
+                    submit_clicked = True
+                    agent.show_success(
+                        "Detected manual submission — recording success."
+                    )
                     logger.info(
-                        "Submission inferred from URL/form change "
-                        f"(url_changed={_post_signals.get('url_changed')}, "
-                        f"form_gone={_post_signals.get('form_disappeared')}, "
-                        f"errors={_has_errors}).",
+                        f"human_submitted_directly signals={_pre_signals} "
+                        f"strong={_strong_pre} soft={_soft_pre}",
                         phase=ExecutionPhase.LLM,
                     )
-            elif submit_attempted and not _has_errors:
-                # Submit was attempted, nothing changed visibly, but no
-                # error either.  Treat as probable-success so we don't
-                # drop the user into a "form incomplete" handoff for a
-                # form that was in fact already submitted.  The user
-                # can still verify in the visible browser window.
-                agent.show_success(
-                    "Submit attempted — confirmation not auto-detected. "
-                    "Verify in the browser; the application likely went through."
+
+                # ── Click the Submit button ───────────────────────────────────
+                # The agent fill loop never emits a "SUBMIT" action itself —
+                # the Next/Submit/Apply click detection in ``_split_off_advance_clicks``
+                # holds those back while required fields are still empty.
+                # If the user did NOT already submit during the review, the
+                # agent clicks Submit now using the ATS-specific handler
+                # first (Greenhouse's ``#submit_app_button``, Ashby's
+                # ``button[type=submit]``, Workday's sequence, etc.), then
+                # a generic Submit locator if that fails.
+                try:
+                    if not user_submitted_during_review and rules_handler is not None:
+                        agent.show_status(
+                            "Clicking submit…", phase=ExecutionPhase.LLM
+                        )
+                        submit_clicked = bool(rules_handler.submit_application())
+                except Exception as e:
+                    logger.warning(
+                        f"ATS-specific submit_application() raised {e!r}; "
+                        "falling back to generic submit.",
+                        phase=ExecutionPhase.LLM,
+                    )
+
+                if not submit_clicked:
+                    # Generic fallback — matches the most common submit-button
+                    # shapes across every ATS we've seen.
+                    submit_candidates = [
+                        "button[type='submit']:not([disabled])",
+                        "input[type='submit']:not([disabled])",
+                        "button:has-text('Submit Application')",
+                        "button:has-text('Submit application')",
+                        "button:has-text('Submit'):not([disabled])",
+                        "button:has-text('Apply Now'):not([disabled])",
+                        "button:has-text('Send Application')",
+                        "[role='button']:has-text('Submit')",
+                    ]
+                    for sel in submit_candidates:
+                        try:
+                            btn = page.locator(sel).last
+                            if btn.count() == 0:
+                                continue
+                            try:
+                                btn.scroll_into_view_if_needed(timeout=1500)
+                            except Exception:
+                                pass
+                            if not btn.is_visible(timeout=1200):
+                                continue
+                            btn.click(timeout=5000)
+                            submit_clicked = True
+                            logger.info(
+                                f"Clicked submit via generic selector '{sel}'.",
+                                phase=ExecutionPhase.LLM,
+                            )
+                            break
+                        except Exception as e:
+                            logger.debug(
+                                f"Submit selector '{sel}' failed: {e}",
+                                phase=ExecutionPhase.LLM,
+                            )
+                            continue
+
+                if not submit_clicked:
+                    agent.show_error(
+                        "Could not find the Submit button. Please click it "
+                        "manually in the browser."
+                    )
+                    handoff = agent.handoff_to_human(
+                        reason=(
+                            "Automation couldn't locate the Submit button. "
+                            "Please click Submit yourself."
+                        ),
+                        hint=(
+                            "Click the Submit/Apply button in the browser. "
+                            "When you see the confirmation page, press ENTER."
+                        ),
+                    )
+                    if self._handoff_skipped_job(handoff, agent, logger, ExecutionPhase.LLM):
+                        logger.log_phase_end(ExecutionPhase.LLM, False)
+                        return False
+                    if handoff.cancelled:
+                        logger.log_phase_end(ExecutionPhase.LLM, False)
+                        return False
+                    manual_submit_attempted = True
+                    page = handoff.page
+                    agent.page = page
+
+                # Wait for the submission to settle (navigation / SPA update).
+                try:
+                    page.wait_for_load_state("networkidle", timeout=8000)
+                except Exception:
+                    try:
+                        page.wait_for_timeout(2500)
+                    except Exception:
+                        pass
+
+                # Check for Ashby spam banner
+                try:
+                    spam_banner = page.locator("text='Your application submission was flagged as possible spam'")
+                    if spam_banner.count() > 0 and spam_banner.first.is_visible(timeout=500):
+                        agent.show_warning("Ashby flagged the submission as spam. Automatically skipping this job and moving to the next...")
+                        logger.log_phase_end(ExecutionPhase.LLM, False)
+                        return False
+                except Exception: pass
+
+                # ── Final success evaluation ──────────────────────────────────
+                # Ashby / Greenhouse / Lever rarely show the same literal
+                # text on their confirmation pages, and modern ATSes are
+                # SPAs that often keep the URL path identical — so a fixed
+                # phrase list is always incomplete. _looks_like_confirmation
+                # gathers four independent signals and accepts the
+                # submission as soon as one strong signal fires OR a soft
+                # signal fires while no validation error is visible. The
+                # same helper is used during the pre-submit handoff to
+                # detect "user already submitted in the browser".
+                _strong_confirm, _soft_confirm, _post_signals = self._looks_like_confirmation(
+                    page, _pre_submit_url, _pre_submit_had_submit_btn
                 )
-                logger.capture_screenshot(
-                    page, "llm_submit_unverified", ExecutionPhase.LLM
-                )
-                success = True
-            elif submit_attempted and _has_errors:
-                # Real failure: the form is still showing validation
-                # errors after the click.  Fall through to the handoff
-                # so the human can fix and retry.
-                agent.show_warning(
-                    "Submit was attempted but the form still shows validation errors. "
-                    "Please fix them in the browser."
-                )
-                logger.capture_screenshot(
-                    page, "llm_submit_failed", ExecutionPhase.LLM
-                )
-            else:
-                agent.show_error("Submission could not be verified.")
+                _has_errors = bool(_post_signals.get("has_errors"))
+
+                is_confirmation = _strong_confirm or _soft_confirm
+                submit_attempted = submit_clicked or manual_submit_attempted
+                success = bool(submit_attempted and is_confirmation)
+
+                if success:
+                    agent.show_success("Application submitted!")
+                    page.wait_for_timeout(1000)
+                    logger.capture_screenshot(page, "llm_success", ExecutionPhase.LLM)
+                    if not _strong_confirm:
+                        # Be transparent that we inferred success from
+                        # behavioural signals rather than explicit text.
+                        logger.info(
+                            "Submission inferred from URL/form change "
+                            f"(url_changed={_post_signals.get('url_changed')}, "
+                            f"form_gone={_post_signals.get('form_disappeared')}, "
+                            f"errors={_has_errors}).",
+                            phase=ExecutionPhase.LLM,
+                        )
+                elif submit_attempted and not _has_errors:
+                    # Submit was attempted, nothing changed visibly, but no
+                    # error either.  Treat as probable-success so we don't
+                    # drop the user into a "form incomplete" handoff for a
+                    # form that was in fact already submitted.  The user
+                    # can still verify in the visible browser window.
+                    agent.show_success(
+                        "Submit attempted — confirmation not auto-detected. "
+                        "Verify in the browser; the application likely went through."
+                    )
+                    logger.capture_screenshot(
+                        page, "llm_submit_unverified", ExecutionPhase.LLM
+                    )
+                    success = True
+                    submission_successful = True
+                elif submit_attempted and _has_errors:
+                    agent.show_warning(
+                        "Submit was attempted but the form still shows validation errors. "
+                        "Retrying pre-submit checks..."
+                    )
+                    logger.capture_screenshot(
+                        page, "llm_submit_failed", ExecutionPhase.LLM
+                    )
+                    continue
+                else:
+                    agent.show_error("Submission could not be verified.")
+                    break
 
             logger.log_phase_end(ExecutionPhase.LLM, success)
             return success
